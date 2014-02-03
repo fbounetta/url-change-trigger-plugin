@@ -155,6 +155,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 
     	String defaultConfSpec;
     	String minConfSpec;
+    	long minFrequency;
     	int defaultTimeout;
     	int maxTimeout;
     	
@@ -171,6 +172,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         	maxTimeout = getMaxTimeout(formData);
         	defaultTimeout = getDefaultTimeout(formData);
         	minConfSpec = getMinConfSpec(formData);
+        	minFrequency = getMinFrequency(minConfSpec);
         	defaultConfSpec = getDefaultConfSpec(formData);
         	save();
         	return super.configure(req, formData);
@@ -228,7 +230,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	                    return FormValidation.warning(msg);
 	                }
 	                //Compare the schedule to the minimum set in Global Configuration if any
-	                if(!StringUtils.isEmpty(minConfSpec) && isLessThanMinConfSpec(value, minConfSpec))
+	                if(!StringUtils.isEmpty(minConfSpec) && isLessFrequentThanMinConfSpec(value))
 	                	return FormValidation.error("Cannot schedule the trigger more frequent than Mimimum Schedule set in Global Configuration ( "+minConfSpec+" ).");
         		} else {
         			if(StringUtils.isEmpty(defaultConfSpec)) 
@@ -253,7 +255,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	                    return FormValidation.warning(msg);
 	                }
 	                //Compare the schedule to the minimum set in Global Configuration if any
-	                if(!StringUtils.isEmpty(minConfSpec) && isLessThanMinConfSpec(value, minConfSpec))
+	                if(!StringUtils.isEmpty(minConfSpec) && isLessFrequentThanMinConfSpec(value))
 	                	return FormValidation.error("Cannot have Default Schedule more frequent than Minimum Schedule ( "+minConfSpec+" ).");
         		} else {
         			if(!StringUtils.isEmpty(minConfSpec)) 
@@ -425,7 +427,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         			return "";
         	} else {
         		//Check if the default set if equal or more than the minimum if any
-        		if(!StringUtils.isEmpty(minConfSpec) && isLessThanMinConfSpec(confSpec, minConfSpec)) 
+        		if(!StringUtils.isEmpty(minConfSpec) && isLessFrequentThanMinConfSpec(confSpec)) 
         			return minConfSpec;
         	}
         	return confSpec;
@@ -443,31 +445,44 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         	return minConfSpec;
         }
         
-        public boolean isLessThanMinConfSpec(String expression, String minExpression) {
-        	//SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        	
-        	try {
-    	    	CronTab cron = new CronTab(expression);
-    	    	Calendar cal = Calendar.getInstance();
-    	    	Calendar nextFireAt = cron.ceil(cal.getTimeInMillis());
-    	    	Calendar preFireAt = cron.floor(cal.getTimeInMillis());
-    	    	
-    	    	CronTab minCron = new CronTab(minExpression);
-    	    	Calendar nextMinFireAt = minCron.ceil(cal.getTimeInMillis());
-    	    	Calendar preMinFireAt = minCron.floor(cal.getTimeInMillis());
-    	    	
-    	    	//System.out.println("Current date&time: "+sdf.format(cal.getTime()));
-    	    	//System.out.println("Next fire at: "+sdf.format(nextFireAt.getTime()));
-    	    	//System.out.println("Previous fire at: "+sdf.format(preFireAt.getTime()));
-    	    	//System.out.println("Next Min fire at: "+sdf.format(nextMinFireAt.getTime()));
-    	    	//System.out.println("Previous Min fire at: "+sdf.format(preMinFireAt.getTime()));
-    	    	
-    	    	long minDiff = nextMinFireAt.getTimeInMillis() - preMinFireAt.getTimeInMillis();
-    	    	long diff = nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
-    	    	if(minDiff>diff)
-    	    		return true;
-    	    	
-        	} catch (RecognitionException e) {}
+        /**
+         * Determine next and previous scheduled time from minimum cron expression
+         * and store the frequency in a local variable 
+         * The returned value will be used to compare new schedule to the minimum allowed 
+         */
+        private long getMinFrequency(String expression) {
+        	long min=0;
+        	if(!StringUtils.isEmpty(expression)) {
+        		try {
+	        		Calendar cal = Calendar.getInstance();
+		        	CronTab minCron = new CronTab(expression);
+			    	Calendar nextFireAt = minCron.ceil(cal.getTimeInMillis());
+			    	Calendar preFireAt = minCron.floor(cal.getTimeInMillis());
+			    	return nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
+        		} catch (RecognitionException e) {}
+        	}
+        	return min;
+        }
+        
+        /**
+        * Determine next and previous scheduled time from cron expression
+        * Compare it to minFrequency
+        * return true if this cron expression will be triggered more frequently than the minimum allowed
+        * return false otherwise
+        */
+        public boolean isLessFrequentThanMinConfSpec(String expression) {
+        	if(minFrequency>0) {
+	        	try {
+	    	    	CronTab cron = new CronTab(expression);
+	    	    	Calendar cal = Calendar.getInstance();
+	    	    	Calendar nextFireAt = cron.ceil(cal.getTimeInMillis());
+	    	    	Calendar preFireAt = cron.floor(cal.getTimeInMillis());
+	    	    	
+	    	    	long diff = nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
+	    	    	if(minFrequency>diff)
+	    	    		return true;
+	        	} catch (RecognitionException e) {}
+        	}
         	return false;
         }
         
