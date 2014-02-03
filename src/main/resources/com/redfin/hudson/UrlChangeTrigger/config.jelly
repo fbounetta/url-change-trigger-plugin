@@ -4,13 +4,24 @@
 
     See global.jelly for a general discussion about jelly script.
   -->
-  <f:entry title="URL" help="/plugin/url-change-trigger/help-projectConfig.html">
+  	<f:entry title="URL" help="/plugin/url-change-trigger/help-projectConfig.html">
     <!--
       ${builder.name} is EL-like (JEXL) expression that calls "builder.getName()" on our builder instance.
       builder is set to null if the project is not configured with HelloWorldBuilder when
       the form is rendered, but since this is EL, in that case this expression
       evaluates to null, and you'll get an empty text box, which is just what we want.
     -->
-    <f:textbox name="urlChangeTrigger.url" value="${instance.url}" />
-  </f:entry>
+    	<f:textbox name="urlChangeTrigger.url" field="urlChangeTrigger.url" value="${instance.url}" />
+  	</f:entry>
+   	
+   	<f:entry title="Timeout" help="/plugin/url-change-trigger/help-timeout.html">
+    	<f:textbox name="timeout" field="timeout" value="${instance.timeout}"/>
+   	</f:entry>
+	
+	<f:advanced>
+		<f:entry title="${%Schedule}" help="/descriptor/hudson.triggers.TimerTrigger/help/spec">
+			<f:textarea name="confSpec" field="confSpec" value="${instance.spec}"/>
+		</f:entry>
+	</f:advanced>
+ 
 </j:jelly>

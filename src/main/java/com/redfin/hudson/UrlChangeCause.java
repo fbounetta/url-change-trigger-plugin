@@ -10,13 +10,19 @@ import java.net.URL;
  */
 public class UrlChangeCause extends Cause {
     private final URL url;
+    private final int timeout;
 
-    public UrlChangeCause(URL url) {
+    /*public UrlChangeCause(URL url) {
         this.url = url;
+    }*/
+    
+    public UrlChangeCause(URL url, int timeout) {
+        this.url = url;
+        this.timeout = timeout;
     }
 
     @Override
     public String getShortDescription() {
-        return Messages.UrlChangeCause_Description(url!=null?url:"remote URL");
+        return Messages.UrlChangeCause_Description(url!=null?url:"remote URL", timeout);
     }
 }

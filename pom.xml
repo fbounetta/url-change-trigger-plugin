@@ -37,7 +37,7 @@
 
   <groupId>org.hudsonci.plugins</groupId>
   <artifactId>url-change-trigger</artifactId>
-  <version>1.4-h-2-SNAPSHOT</version>
+  <version>1.4-h-3-SNAPSHOT</version>
   <packaging>hpi</packaging>
 
   <name>URL Change Trigger Plugin</name>
@@ -335,12 +335,13 @@
       </plugin>
     </plugins>
   </reporting>
-
+  
   <dependencies>
     <dependency>
       <groupId>org.antlr</groupId>
       <artifactId>antlr</artifactId>
       <version>3.5-rc-2</version>
     </dependency>
+    
   </dependencies>
 </project>
