@@ -15,7 +15,6 @@ import hudson.util.FormValidation;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.SocketTimeoutException;
 import java.net.URL;
@@ -62,21 +61,18 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
     public void start(BuildableItem project, boolean newInstance) {
     	super.start(project, newInstance);
     	if(StringUtils.isEmpty(spec)) {
-    		//Get the default confSpec from descriptor if any
-    		if(!StringUtils.isEmpty(getDescriptor().defaultConfSpec)) {
-    			try {
-   				 this.tabs = CronTabList.create(getDescriptor().defaultConfSpec);
-    			} catch (RecognitionException e) {
+    		try {
+	    		//Get the default confSpec from descriptor if any
+	    		if(!StringUtils.isEmpty(getDescriptor().defaultConfSpec)) 
+	    			this.tabs = CronTabList.create(getDescriptor().defaultConfSpec); 	
+	    		else 
+	    			this.tabs = CronTabList.create("* * * * *");
+	    	} catch (RecognitionException e) {
 		        	throw new RuntimeException("Bug! couldn't schedule poll");
-				} 	
-    		} else {
-    			try {
-			        this.tabs = CronTabList.create("* * * * *");
-		        } catch (RecognitionException e) {
-		        	throw new RuntimeException("Bug! couldn't schedule poll");
-				}   
-    		}
-    	} 
+			}
+    	}
+    	if(timeout==0)
+    		timeout = getDescriptor().getDefaultTimeout();
     }
 
     public static final Logger LOGGER = Logger.getLogger(UrlChangeTrigger.class.getName());
@@ -90,7 +86,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
     	InputStream is=null;
     	URLConnection con=null;
     	try {
-        	LOGGER.log(Level.INFO, "*** Job {0} processing URL {1} with {2} seconds timeout.", new Object[] {job.getDisplayName(), url, timeout});
+        	LOGGER.log(Level.FINE, "*** Job {0} processing URL {1} with {2} seconds timeout.", new Object[] {job.getDisplayName(), url, timeout});
         	int mill = timeout*1000;
         	con = url.openConnection();
 	    	con.setConnectTimeout(mill);
@@ -124,14 +120,12 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
      	   LOGGER.log(Level.WARNING, "*** I/O Exception: Job {0} processing URL {1} with {2} seconds timeout.\n {3}  ", new Object[]{job.getDisplayName(), url, timeout, e});
            throw new RuntimeException(e);
  	   } finally {
- 		   try {
-	 		   if(is!=null)
-	 			   is.close();
-	 		   if(con!=null)
-	 			   if(con instanceof HttpURLConnection)
-	 				   ((HttpURLConnection) con).disconnect();
- 		   } catch (IOException e) {
- 			  throw new RuntimeException(e);
+ 		   if(is!=null) {
+ 			   try {
+ 				   is.close();
+ 			  } catch (IOException e) {
+ 	 			  throw new RuntimeException(e);
+ 	 		   }
  		   }
 	   }
         
@@ -171,9 +165,11 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         public boolean configure(StaplerRequest req, JSONObject formData) throws FormException {
         	maxTimeout = getMaxTimeout(formData);
         	defaultTimeout = getDefaultTimeout(formData);
-        	minConfSpec = getMinConfSpec(formData);
+        	validateAndResetTimeouts();
+        	minConfSpec = formData.getString("minConfSpec");
+        	defaultConfSpec = formData.getString("defaultConfSpec");
         	minFrequency = getMinFrequency(minConfSpec);
-        	defaultConfSpec = getDefaultConfSpec(formData);
+        	validateAndResetConfSpecs();
         	save();
         	return super.configure(req, formData);
         }
@@ -230,13 +226,13 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	                    return FormValidation.warning(msg);
 	                }
 	                //Compare the schedule to the minimum set in Global Configuration if any
-	                if(!StringUtils.isEmpty(minConfSpec) && isLessFrequentThanMinConfSpec(value))
-	                	return FormValidation.error("Cannot schedule the trigger more frequent than Mimimum Schedule set in Global Configuration ( "+minConfSpec+" ).");
+	                if(isLessFrequentThanMinConfSpec(value))
+	                	return FormValidation.error("Cannot schedule the trigger more frequent than "+minConfSpec +" (Mimimum Schedule set in Global Configuration).");
         		} else {
         			if(StringUtils.isEmpty(defaultConfSpec)) 
             			return FormValidation.error("Schedule needs to be specified. Global configuration is missing.");
             		else
-            			return FormValidation.ok("If no Schedule is set for this job, it will use the Global Schedule ( "+defaultConfSpec+" ).");
+            			return FormValidation.ok("If no Schedule is set for this job, it will use the Default Schedule set in Global Configuration ( "+defaultConfSpec+" ).");
             	}
                 return FormValidation.ok();
             } catch (RecognitionException e) {
@@ -254,12 +250,9 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	                if (msg != null) {
 	                    return FormValidation.warning(msg);
 	                }
-	                //Compare the schedule to the minimum set in Global Configuration if any
-	                if(!StringUtils.isEmpty(minConfSpec) && isLessFrequentThanMinConfSpec(value))
-	                	return FormValidation.error("Cannot have Default Schedule more frequent than Minimum Schedule ( "+minConfSpec+" ).");
         		} else {
         			if(!StringUtils.isEmpty(minConfSpec)) 
-        				return FormValidation.ok("Default schedule will be set to "+minConfSpec +" if no value is added.");
+        				return FormValidation.ok("Default schedule will be set to "+minConfSpec +" if no value is added (Minimum Schedule).");
         			else
         				return FormValidation.ok("Default schedule will be set to Minimum Schedule if no value is added.");
         		}
@@ -278,9 +271,9 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 		            }
         		} else {
         			if(!StringUtils.isEmpty(defaultConfSpec))
-        				return FormValidation.ok("Minimum schedule will be set to "+defaultConfSpec +" if no value is added.");
+        				return FormValidation.ok("Minimum schedule will be set to "+defaultConfSpec +" if no value is added (Default Schedule).");
         			else
-        				return FormValidation.ok("Minimum schedule will be set to default schedule if no value is added.");
+        				return FormValidation.ok("Minimum schedule will be set to Default Schedule if no value is added.");
         		}
             } catch (RecognitionException e) {
                 return FormValidation.error(e.getMessage());
@@ -303,13 +296,11 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	            
 	            if(timeout<=0)
 	            	return FormValidation.error("Default Timeout should be greater than 0 (in seconds).");
-	            if(maxTimeout>0 && timeout>maxTimeout)
-	            	return FormValidation.error("Default Timeout cannot be greater than "+maxTimeout+" seconds (Maximum Timeout).");
         	} else {
         		 if(maxTimeout>0)
- 	            	return FormValidation.ok("Default timeout will be set to +" +maxTimeout+" seconds if no value is added. (using Maximum Timeout)");
+ 	            	return FormValidation.ok("Default Timeout will be set to " +maxTimeout+" seconds if no value is added. (Maximum Timeout)");
         		 else
-        			 return FormValidation.ok("Default timeout will be set to Maximum Timeout if no value is added.");
+        			 return FormValidation.ok("Default Timeout will be set to Maximum Timeout if no value is added.");
         	}
             return FormValidation.ok();
         }
@@ -360,14 +351,20 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
             return FormValidation.ok();
         }
         
-        private int getTimeout(JSONObject formData) {
-        	String timeout = formData.getString("timeout");
-        	if (!StringUtils.isEmpty(timeout)) {
+        private int getTimeout(JSONObject formData) throws FormException {
+        	String time = formData.getString("timeout");
+        	int timeout=0;
+        	if (!StringUtils.isEmpty(time)) {
         		try {
-        			return Integer.parseInt(timeout);
+        			timeout = Integer.parseInt(time);
         		} catch (NumberFormatException e) {
         			//In this case use the global timeout
         		}
+        		if(timeout==0) {
+        			if(defaultTimeout==0)
+        				throw new FormException("Timeout needs to be specified. Global configuration is missing.", "");
+        		} else 
+        			return timeout;
         	} 
         	return defaultTimeout;
         }
@@ -391,16 +388,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         		} catch (NumberFormatException e) {
         			//This shouldn't happen since we already validated the Timeout
         		}
-        	} else {
-        		String maxTimeout = formData.getString("maxTimeout");
-            	if (!StringUtils.isEmpty(maxTimeout)) {
-            		try {
-            			return Integer.parseInt(maxTimeout);
-            		} catch (NumberFormatException e) {
-            			//This shouldn't happen since we already validated the Timeout
-            		}
-            	}
-        	}
+        	} 
         	return 0;
         }
         
@@ -412,76 +400,83 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         		} catch (NumberFormatException e) {
         			//This shouldn't happen since we already validated the Timeout
         		}
-        	} else if(defaultTimeout>0) {
-        		return defaultTimeout;
-        	}
+        	} 
         	return 0;
         }
         
-        private String getDefaultConfSpec(JSONObject formData) {
-        	String confSpec = formData.getString("defaultConfSpec");
-        	if (StringUtils.isEmpty(confSpec)) {
-        		if(!StringUtils.isEmpty(minConfSpec))
-        			return minConfSpec;
-        		else 
-        			return "";
+        private void validateAndResetTimeouts() throws FormException {
+        	if(defaultTimeout>0 && maxTimeout>0) {
+        		if(defaultTimeout>maxTimeout) {
+        			String msg = "Default Timeout  "+defaultTimeout;
+        			defaultTimeout = maxTimeout;
+        			throw new FormException(msg+" cannot exceed "+maxTimeout+" seconds (Maximum Timeout).", "");
+        		}
         	} else {
-        		//Check if the default set if equal or more than the minimum if any
-        		if(!StringUtils.isEmpty(minConfSpec) && isLessFrequentThanMinConfSpec(confSpec)) 
-        			return minConfSpec;
+        		if(defaultTimeout>0)
+        			maxTimeout = defaultTimeout;
+        		else
+        			defaultTimeout = maxTimeout;
         	}
-        	return confSpec;
         }
         
-        private String getMinConfSpec(JSONObject formData) {
-        	String minConfSpec = formData.getString("minConfSpec");
-        	String confSpec = formData.getString("defaultConfSpec");
-        	if (StringUtils.isEmpty(minConfSpec)) {
-        		if(!StringUtils.isEmpty(confSpec))
-        			return confSpec;
-        		else
-        			return "";
-        	} 
-        	return minConfSpec;
+        private void validateAndResetConfSpecs() throws FormException {
+        	if(!StringUtils.isEmpty(defaultConfSpec) && !StringUtils.isEmpty(minConfSpec)) {
+        		try {
+        			if(isLessFrequentThanMinConfSpec(defaultConfSpec)) {
+        				String msg = "Default Schedule "+defaultConfSpec;
+        				defaultConfSpec = minConfSpec;
+        				throw new FormException(msg+" cannot be less than "+minConfSpec+ " (Minimum Schedule).", "");
+        			}
+        		} catch (RecognitionException e) {
+        			throw new FormException(e.getMessage(), e, "");
+        		}
+        	} else {
+        		if(!StringUtils.isEmpty(defaultConfSpec)) {
+        			minConfSpec = defaultConfSpec;
+        			//recalculate minFrequency
+        			minFrequency = getMinFrequency(minConfSpec);
+        		} else
+        			defaultConfSpec = minConfSpec;
+        	}
         }
         
         /**
-         * Determine next and previous scheduled time from minimum cron expression
+         * Determine next and previous scheduled time for the given cron expression
          * and store the frequency in a local variable 
          * The returned value will be used to compare new schedule to the minimum allowed 
          */
-        private long getMinFrequency(String expression) {
+        private long getMinFrequency(String expression) throws FormException {
         	long min=0;
         	if(!StringUtils.isEmpty(expression)) {
         		try {
-	        		Calendar cal = Calendar.getInstance();
+	        		long currentTime = Calendar.getInstance().getTimeInMillis();
 		        	CronTab minCron = new CronTab(expression);
-			    	Calendar nextFireAt = minCron.ceil(cal.getTimeInMillis());
-			    	Calendar preFireAt = minCron.floor(cal.getTimeInMillis());
+			    	Calendar nextFireAt = minCron.ceil(currentTime);
+			    	Calendar preFireAt = minCron.floor(currentTime);
 			    	return nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
-        		} catch (RecognitionException e) {}
+        		} catch (RecognitionException e) {
+        			throw new FormException("Encountered Error when processing Minimum Schedule ",e, "");
+        		}
         	}
         	return min;
         }
         
         /**
-        * Determine next and previous scheduled time from cron expression
+        * Determine next and previous scheduled time for the given cron expression
         * Compare it to minFrequency
         * return true if this cron expression will be triggered more frequently than the minimum allowed
         * return false otherwise
         */
-        public boolean isLessFrequentThanMinConfSpec(String expression) {
+        public boolean isLessFrequentThanMinConfSpec(String expression) throws RecognitionException {
         	if(minFrequency>0) {
-	        	try {
-	    	    	CronTab cron = new CronTab(expression);
-	    	    	Calendar cal = Calendar.getInstance();
-	    	    	Calendar nextFireAt = cron.ceil(cal.getTimeInMillis());
-	    	    	Calendar preFireAt = cron.floor(cal.getTimeInMillis());
-	    	    	
-	    	    	long diff = nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
-	    	    	if(minFrequency>diff)
-	    	    		return true;
-	        	} catch (RecognitionException e) {}
+	        	CronTab cron = new CronTab(expression);
+    	    	long currentTime = Calendar.getInstance().getTimeInMillis();
+    	    	Calendar nextFireAt = cron.ceil(currentTime);
+    	    	Calendar preFireAt = cron.floor(currentTime);
+    	    	
+    	    	long diff = nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
+    	    	if(minFrequency>diff)
+    	    		return true;
         	}
         	return false;
         }
