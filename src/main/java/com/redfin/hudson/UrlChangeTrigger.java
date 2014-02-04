@@ -84,11 +84,10 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
     @Override
     public void run() {
     	InputStream is=null;
-    	URLConnection con=null;
     	try {
         	LOGGER.log(Level.FINE, "*** Job {0} processing URL {1} with {2} seconds timeout.", new Object[] {job.getDisplayName(), url, timeout});
         	int mill = timeout*1000;
-        	con = url.openConnection();
+        	URLConnection con = url.openConnection();
 	    	con.setConnectTimeout(mill);
 	        con.setReadTimeout(mill);
 	        is = con.getInputStream();
@@ -371,11 +370,19 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         
         private String getConfSpec(JSONObject formData) throws FormException {
         	String confSpec = formData.getString("confSpec");
-        	if (StringUtils.isEmpty(confSpec)) {
+        	if(StringUtils.isEmpty(confSpec)) {
         		if(StringUtils.isEmpty(defaultConfSpec)) 
         			throw new FormException("Schedule needs to be specified. Global configuration is missing.", "");
         		else
         			return defaultConfSpec;
+        	} else {
+        		try {
+        			//Compare the schedule to the minimum set in Global Configuration if any
+        			if(isLessFrequentThanMinConfSpec(confSpec))
+        				throw new FormException("Cannot schedule the trigger more frequent than "+minConfSpec +" (Mimimum Schedule set in Global Configuration).", "");
+        		} catch (RecognitionException e) {
+        			throw new FormException(e.getMessage(), "");
+        		}
         	}
         	return confSpec;
         }
