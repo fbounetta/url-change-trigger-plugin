@@ -83,6 +83,6 @@ public class CronSpecTest {
     
     @Test
     public void testFrequency() throws Exception {
-        assertEquals(expectedResult, DescriptorImpl.isMoreFrequentThanMinConfSpec(instance.getSpec(), minConfSpec));
+        assertEquals(expectedResult, DescriptorImpl.isMoreFrequentThanMinConfSpec(instance.getConfSpec(), minConfSpec));
     }
 }
