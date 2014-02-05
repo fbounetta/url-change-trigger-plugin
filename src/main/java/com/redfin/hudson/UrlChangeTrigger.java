@@ -65,14 +65,24 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	    		//Get the default confSpec from descriptor if any
 	    		if(!StringUtils.isEmpty(getDescriptor().defaultConfSpec)) 
 	    			this.tabs = CronTabList.create(getDescriptor().defaultConfSpec); 	
-	    		else 
+	    		else //This use case will be applied to existing jobs that didn't have a schedule and no default value is available
+	    			//New jobs are enforced to have a schedule  
 	    			this.tabs = CronTabList.create("* * * * *");
 	    	} catch (RecognitionException e) {
 		        	throw new RuntimeException("Bug! couldn't schedule poll");
 			}
-    	}
-    	if(timeout==0)
-    		timeout = getDescriptor().getDefaultTimeout();
+    	} 
+    	if(timeout==0) {
+    		if(getDescriptor().getDefaultTimeout()>0) {
+    			timeout = getDescriptor().getDefaultTimeout();
+    		} else {
+    			//This use case will be applied to existing jobs that didn't have a timeout and no default value is available 
+    			//New jobs are enforced to have a timeout
+    			timeout = 60;
+    		}
+    	} else if(getDescriptor().getDefaultTimeout()>0 && timeout>getDescriptor().getDefaultTimeout()) {
+			timeout = getDescriptor().getDefaultTimeout();
+		}
     }
 
     public static final Logger LOGGER = Logger.getLogger(UrlChangeTrigger.class.getName());
@@ -85,13 +95,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
     public void run() {
     	InputStream is=null;
     	try {
-        	LOGGER.log(Level.FINE, "*** Job {0} processing URL {1} with {2} seconds timeout.", new Object[] {job.getDisplayName(), url, timeout});
-        	int mill = timeout*1000;
-        	URLConnection con = url.openConnection();
-	    	con.setConnectTimeout(mill);
-	        con.setReadTimeout(mill);
-	        is = con.getInputStream();
-	        
+        	is = getInputStream(timeout*1000);
 	        String currentMd5 = Util.getDigestOf(is);
             if(currentMd5!=null) {
 	            String oldMd5;
@@ -130,6 +134,13 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         
     }
     
+    public InputStream getInputStream(int timeout) throws SocketTimeoutException, IOException {
+    	URLConnection con = url.openConnection();
+    	con.setConnectTimeout(timeout);
+        con.setReadTimeout(timeout);
+        return con.getInputStream();
+    }
+    
     @Override
     public DescriptorImpl getDescriptor() {
         return (DescriptorImpl)super.getDescriptor();
@@ -142,13 +153,16 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
     public int getTimeout() {
     	return timeout;
     }
+    
+    public String getConfSpec() {
+    	return spec;
+    }
 
     @Extension
     public static final class DescriptorImpl extends TriggerDescriptor {
 
     	String defaultConfSpec;
     	String minConfSpec;
-    	long minFrequency;
     	int defaultTimeout;
     	int maxTimeout;
     	
@@ -167,7 +181,6 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         	validateAndResetTimeouts();
         	minConfSpec = formData.getString("minConfSpec");
         	defaultConfSpec = formData.getString("defaultConfSpec");
-        	minFrequency = getMinFrequency(minConfSpec);
         	validateAndResetConfSpecs();
         	save();
         	return super.configure(req, formData);
@@ -225,7 +238,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
 	                    return FormValidation.warning(msg);
 	                }
 	                //Compare the schedule to the minimum set in Global Configuration if any
-	                if(isLessFrequentThanMinConfSpec(value))
+	                if(isMoreFrequentThanMinConfSpec(value, minConfSpec))
 	                	return FormValidation.error("Cannot schedule the trigger more frequent than "+minConfSpec +" (Mimimum Schedule set in Global Configuration).");
         		} else {
         			if(StringUtils.isEmpty(defaultConfSpec)) 
@@ -378,7 +391,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         	} else {
         		try {
         			//Compare the schedule to the minimum set in Global Configuration if any
-        			if(isLessFrequentThanMinConfSpec(confSpec))
+        			if(isMoreFrequentThanMinConfSpec(confSpec, minConfSpec))
         				throw new FormException("Cannot schedule the trigger more frequent than "+minConfSpec +" (Mimimum Schedule set in Global Configuration).", "");
         		} catch (RecognitionException e) {
         			throw new FormException(e.getMessage(), "");
@@ -429,7 +442,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         private void validateAndResetConfSpecs() throws FormException {
         	if(!StringUtils.isEmpty(defaultConfSpec) && !StringUtils.isEmpty(minConfSpec)) {
         		try {
-        			if(isLessFrequentThanMinConfSpec(defaultConfSpec)) {
+        			if(isMoreFrequentThanMinConfSpec(defaultConfSpec, minConfSpec)) {
         				String msg = "Default Schedule "+defaultConfSpec;
         				defaultConfSpec = minConfSpec;
         				throw new FormException(msg+" cannot be less than "+minConfSpec+ " (Minimum Schedule).", "");
@@ -438,11 +451,9 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         			throw new FormException(e.getMessage(), e, "");
         		}
         	} else {
-        		if(!StringUtils.isEmpty(defaultConfSpec)) {
+        		if(!StringUtils.isEmpty(defaultConfSpec)) 
         			minConfSpec = defaultConfSpec;
-        			//recalculate minFrequency
-        			minFrequency = getMinFrequency(minConfSpec);
-        		} else
+        		else
         			defaultConfSpec = minConfSpec;
         	}
         }
@@ -452,7 +463,7 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
          * and store the frequency in a local variable 
          * The returned value will be used to compare new schedule to the minimum allowed 
          */
-        private long getMinFrequency(String expression) throws FormException {
+        public static long getMinFrequency(String expression) throws FormException {
         	long min=0;
         	if(!StringUtils.isEmpty(expression)) {
         		try {
@@ -470,19 +481,24 @@ public class UrlChangeTrigger extends Trigger<BuildableItem> {
         
         /**
         * Determine next and previous scheduled time for the given cron expression
-        * Compare it to minFrequency
+        * Compare it to minCronSpec
         * return true if this cron expression will be triggered more frequently than the minimum allowed
         * return false otherwise
         */
-        public boolean isLessFrequentThanMinConfSpec(String expression) throws RecognitionException {
-        	if(minFrequency>0) {
-	        	CronTab cron = new CronTab(expression);
-    	    	long currentTime = Calendar.getInstance().getTimeInMillis();
+        public static boolean isMoreFrequentThanMinConfSpec(String confSpec, String minConfSpec) throws RecognitionException {
+        	if(!StringUtils.isEmpty(confSpec) && !StringUtils.isEmpty(minConfSpec)) {
+        		long currentTime = Calendar.getInstance().getTimeInMillis();
+        		CronTab cron = new CronTab(confSpec);
     	    	Calendar nextFireAt = cron.ceil(currentTime);
     	    	Calendar preFireAt = cron.floor(currentTime);
     	    	
+    	    	CronTab minCron = new CronTab(minConfSpec);
+		    	Calendar nextMinFireAt = minCron.ceil(currentTime);
+		    	Calendar preMinFireAt = minCron.floor(currentTime);
+    	    	
     	    	long diff = nextFireAt.getTimeInMillis() - preFireAt.getTimeInMillis();
-    	    	if(minFrequency>diff)
+    	    	long minDiff = nextMinFireAt.getTimeInMillis() - preMinFireAt.getTimeInMillis();
+    	    	if(minDiff>diff)
     	    		return true;
         	}
         	return false;
